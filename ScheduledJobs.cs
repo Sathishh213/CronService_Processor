@@ -207,8 +207,11 @@ namespace CronService_Processor
                 wb.RefreshAll();
                 excel.Calculate();
                 wb.Save();
-                wb.Close(true);
+                wb.Close(0);
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(ws);
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(wb);
                 excel.Quit();
+                System.Runtime.InteropServices.Marshal.ReleaseComObject(excel);
             }
             catch (Exception ex)
             {
