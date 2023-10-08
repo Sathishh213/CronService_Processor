@@ -8,6 +8,14 @@ using System.Net;
 using System.Text;
 using Quartz.Core;
 using System.Threading.Tasks;
+using System.Data;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.IO;
+using Newtonsoft.Json;
+using Microsoft.Office.Interop.Excel;
+using Excel = Microsoft.Office.Interop.Excel;
+using DataTable = System.Data.DataTable;
 
 namespace CronService_Processor
 {
@@ -17,7 +25,25 @@ namespace CronService_Processor
         {
             try
             {
-                SendEmail("Sathishkumarr21@gmail.com", null, null, "Sample", "Sample Mail");
+                    string reportName = "Sales Report";
+                    try
+                    {
+                        Access access = new Access();
+                        string filePath = System.IO.Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory + "/Reports/" + reportName + "/" + string.Format("{0}.txt", reportName));
+                        string cmd = File.ReadAllText(filePath);
+                        DataTable dt = access.GetTable(cmd);
+                        if (dt.Rows.Count > 0 && !string.IsNullOrEmpty(reportName))
+                        {
+                            string filename = ExportToExcel(dt, reportName);
+                            SendThroughMail(filename, reportName);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        //DisplayMsg(ex.Message);
+                        //log.Error(ex);
+                    }
+                //SendEmail("Sathishkumarr21@gmail.com", null, null, "Sample", "Sample Mail");
             }
             catch (Exception ex)
             {
@@ -81,6 +107,130 @@ namespace CronService_Processor
             {
                 throw ex;
             }
+        }
+
+        private async void SendThroughMail(string fileAttachment, string ReportName)
+        {
+            try
+            {
+                string HostAdd = ConfigurationManager.AppSettings["Host"].ToString();
+                string FromEmailAddress = ConfigurationManager.AppSettings["FromMail"].ToString();
+                string ToEmailAddress = ConfigurationManager.AppSettings["ToMail"].ToString();
+                string Password = ConfigurationManager.AppSettings["Password"].ToString();
+
+                string filePath = System.IO.Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory + "/Reports/MailContent.html");
+                if (!string.IsNullOrEmpty(filePath))
+                {
+                    MailMessage mail = new MailMessage();
+                    mail.From = new MailAddress(FromEmailAddress);
+                    mail.To.Add(ToEmailAddress);
+                    mail.Subject = string.Format("{0} - {1}", ReportName, DateTime.Now);
+                    mail.IsBodyHtml = true;
+                    mail.Body = File.ReadAllText(filePath);
+                    SmtpClient SmtpServer = new SmtpClient(HostAdd);
+                    System.Net.Mail.Attachment attachment = new System.Net.Mail.Attachment(fileAttachment);
+                    mail.Attachments.Add(attachment);
+                    SmtpServer.Port = 587;
+                    SmtpServer.UseDefaultCredentials = false;
+                    SmtpServer.Credentials = new NetworkCredential(FromEmailAddress, Password);
+                    SmtpServer.EnableSsl = true;
+                    SmtpServer.Send(mail);
+                }
+                else
+                {
+                    //DisplayMsg("Mail Content Not Found");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+        }
+
+        private string ExportToExcel(System.Data.DataTable dt, string label)
+        {
+            Microsoft.Office.Interop.Excel.Application excel = null;
+            Microsoft.Office.Interop.Excel.Workbook wb = null;
+
+            object misValue = System.Reflection.Missing.Value;
+            Microsoft.Office.Interop.Excel.Worksheet ws = null;
+            Microsoft.Office.Interop.Excel.Range rng = null;
+            string filename = String.Empty;
+            TextInfo textInfo = new CultureInfo("en-US", false).TextInfo;
+
+            try
+            {
+                filename = System.IO.Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory + "/Reports/" + label + "/" + string.Format("{0}.xlsx", label));
+                excel = new Microsoft.Office.Interop.Excel.Application();
+                wb = excel.Workbooks.Open(filename, 0, false, 5, "", "",
+                            false, XlPlatform.xlWindows, "", true, false,
+                            0, true, false, false);
+                ws = (Microsoft.Office.Interop.Excel.Worksheet)wb.ActiveSheet;
+
+                for (int Idx = 0; Idx < dt.Columns.Count; Idx++)
+                {
+                    ws.Range["A1"].Offset[0, Idx].Value = dt.Columns[Idx].ColumnName;
+                    ws.Range["A1"].Offset[0].EntireRow.Font.Bold = true;
+                }
+
+                if (label == "Stock Report")
+                {
+                    for (int Idx = 0; Idx < dt.Rows.Count; Idx++)
+                    {
+                        ws.Range["A2"].Offset[Idx].Resize[1, dt.Columns.Count].Value =
+                        dt.Rows[Idx].ItemArray;
+                    }
+                }
+                else if (label == "Sales Report")
+                {
+                    int f_idx = 0;
+                    for (int Idx = 0; Idx < dt.Rows.Count; Idx++)
+                    {
+                        int g_idx = f_idx + (Idx == 0 ? Idx : 1);
+                        var salesDataArray = dt.Rows[Idx].ItemArray;
+                        salesDataArray[1] = "Given Below";
+                        ws.Range["A2"].Offset[g_idx].Resize[1, dt.Columns.Count].Value = salesDataArray;
+                        //dt.Rows[Idx].ItemArray;
+                        if (dt.Rows[Idx]["Order Details"] != null)
+                        {
+                            DataTable dataTable2 = (DataTable)JsonConvert.DeserializeObject(dt.Rows[Idx]["Order Details"].ToString(), (typeof(DataTable)));
+                            if (dataTable2 != null && dataTable2.Rows.Count > 0)
+                            {
+                                int A_cellrange = 3 + g_idx;
+                                int D_cellrange = 3 + g_idx + dataTable2.Rows.Count;
+                                for (int c_idx = 0; c_idx < dataTable2.Columns.Count; c_idx++)
+                                {
+                                    ws.Range["A3"].Offset[g_idx, c_idx + 1].Value = textInfo.ToTitleCase(dataTable2.Columns[c_idx].ColumnName.Replace("_", " "));
+                                    ws.Range["A3"].Offset[g_idx].EntireRow.Font.Bold = true;
+                                }
+                                for (int idx = 0; idx < dataTable2.Rows.Count; idx++)
+                                {
+                                    f_idx = g_idx + idx;
+                                    ws.Range["A4"].Offset[f_idx, 1].Resize[1, 4].Value = dataTable2.Rows[idx].ItemArray;
+                                }
+                                string _range = string.Format("A{0}:D{1}", A_cellrange, D_cellrange);
+                                Excel.Range range = ws.Range[_range] as Excel.Range;
+                                range.Rows.Group(misValue, misValue, misValue, misValue);
+                                f_idx += 2;
+                            }
+                        }
+                    }
+                    ws.Outline.SummaryRow = XlSummaryRow.xlSummaryAbove;
+                    ws.Outline.ShowLevels(1, 0);
+                }
+
+                ws.Columns.AutoFit();
+                wb.RefreshAll();
+                excel.Calculate();
+                wb.Save();
+                wb.Close(true);
+                excel.Quit();
+            }
+            catch (Exception ex)
+            {
+                //MessageBox.Show("Error: " + ex.ToString());
+            }
+            return filename;
         }
     }
 }
