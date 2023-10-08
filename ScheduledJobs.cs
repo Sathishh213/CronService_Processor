@@ -16,34 +16,48 @@ using Newtonsoft.Json;
 using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 using DataTable = System.Data.DataTable;
+using System.Collections;
+using System.Diagnostics;
 
 namespace CronService_Processor
 {
     public class ScheduledJobs : IJob
     {
+        EventLog EventLog = new EventLog();
         public void Execute(IJobExecutionContext context)
         {
             try
             {
-                    string reportName = "Sales Report";
-                    try
+                EventLog.Log = "CronService_Processor";
+                if (!EventLog.SourceExists("Cron Email Service"))
+                {
+                    EventLog.CreateEventSource("Cron Email Service", "Cron Email Service");
+                }
+                EventLog.WriteEntry("Cron Email Service","Starting Email Service",EventLogEntryType.Information);
+                string[] reports = ConfigurationManager.AppSettings["Reports"].ToString().Split(',');
+                try
+                {
+                    Access access = new Access();
+                    foreach (string reportName in reports)
                     {
-                        Access access = new Access();
+                        EventLog.WriteEntry("Cron Email Service", $"fetching Report Details for {reportName}", EventLogEntryType.Information);
                         string filePath = System.IO.Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory + "/Reports/" + reportName + "/" + string.Format("{0}.txt", reportName));
                         string cmd = File.ReadAllText(filePath);
                         DataTable dt = access.GetTable(cmd);
                         if (dt.Rows.Count > 0 && !string.IsNullOrEmpty(reportName))
                         {
+                            EventLog.WriteEntry("Cron Email Service", $"Exporting {reportName} to Excel", EventLogEntryType.Information);
                             string filename = ExportToExcel(dt, reportName);
-                            SendThroughMail(filename, reportName);
+                            EventLog.WriteEntry("Cron Email Service", $"Sending Email for {reportName}", EventLogEntryType.Information);
+                            SendEmail(filename, reportName);
+                            EventLog.WriteEntry("Cron Email Service", $"{reportName} Email Sent", EventLogEntryType.Information);
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        //DisplayMsg(ex.Message);
-                        //log.Error(ex);
-                    }
-                //SendEmail("Sathishkumarr21@gmail.com", null, null, "Sample", "Sample Mail");
+                }
+                catch (Exception ex)
+                {
+                    EventLog.WriteEntry("Cron Email Service", $"Exception occurred - {ex.Message} - {ex.StackTrace}", EventLogEntryType.Error);
+                }
             }
             catch (Exception ex)
             {
@@ -51,71 +65,15 @@ namespace CronService_Processor
             }
         }
 
-        public void SendEmail(String ToEmail, string cc, string bcc, String Subj, string Message)
-        {
-            //Reading sender Email credential from web.config file  
-            try
-            {
-                string HostAdd = ConfigurationManager.AppSettings["Host"].ToString();
-                string FromEmailid = ConfigurationManager.AppSettings["FromMail"].ToString();
-                string Pass = ConfigurationManager.AppSettings["Password"].ToString();
-
-                //creating the object of MailMessage  
-                MailMessage mailMessage = new MailMessage();
-                mailMessage.From = new MailAddress(FromEmailid); //From Email Id  
-                mailMessage.Subject = Subj; //Subject of Email  
-                mailMessage.Body = Message; //body or message of Email  
-                mailMessage.IsBodyHtml = true;
-
-                string[] ToMuliId = ToEmail.Split(',');
-                foreach (string ToEMailId in ToMuliId)
-                {
-                    mailMessage.To.Add(new MailAddress(ToEMailId)); //adding multiple TO Email Id  
-                }
-
-                if (!string.IsNullOrEmpty(cc))
-                {
-                    string[] CCId = cc.Split(',');
-
-                    foreach (string CCEmail in CCId)
-                    {
-                        mailMessage.CC.Add(new MailAddress(CCEmail)); //Adding Multiple CC email Id  
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(bcc))
-                {
-                    string[] bccid = bcc.Split(',');
-
-                    foreach (string bccEmailId in bccid)
-                    {
-                        mailMessage.Bcc.Add(new MailAddress(bccEmailId)); //Adding Multiple BCC email Id  
-                    }
-                }
-
-                SmtpClient smtp = new SmtpClient(HostAdd);  // creating object of smptpclient  
-                smtp.UseDefaultCredentials = false;
-                NetworkCredential NetworkCred = new NetworkCredential();
-                NetworkCred.UserName = mailMessage.From.Address;
-                NetworkCred.Password = Pass;
-                smtp.Credentials = NetworkCred;
-                smtp.EnableSsl = true;
-                smtp.Port = 587;
-                smtp.Send(mailMessage); //sending Email 
-            }
-            catch (Exception ex)
-            {
-                throw ex;
-            }
-        }
-
-        private async void SendThroughMail(string fileAttachment, string ReportName)
+        private void SendEmail(string fileAttachment, string ReportName)
         {
             try
             {
                 string HostAdd = ConfigurationManager.AppSettings["Host"].ToString();
                 string FromEmailAddress = ConfigurationManager.AppSettings["FromMail"].ToString();
                 string ToEmailAddress = ConfigurationManager.AppSettings["ToMail"].ToString();
+                string ccList = ConfigurationManager.AppSettings["CC_Mail"].ToString();
+                string bccList = ConfigurationManager.AppSettings["BCC_Mail"].ToString();
                 string Password = ConfigurationManager.AppSettings["Password"].ToString();
 
                 string filePath = System.IO.Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory + "/Reports/MailContent.html");
@@ -123,10 +81,36 @@ namespace CronService_Processor
                 {
                     MailMessage mail = new MailMessage();
                     mail.From = new MailAddress(FromEmailAddress);
-                    mail.To.Add(ToEmailAddress);
                     mail.Subject = string.Format("{0} - {1}", ReportName, DateTime.Now);
                     mail.IsBodyHtml = true;
                     mail.Body = File.ReadAllText(filePath);
+
+                    string[] ToMuliId = ToEmailAddress.Split(',');
+                    foreach (string ToEMailId in ToMuliId)
+                    {
+                        mail.To.Add(new MailAddress(ToEMailId)); //adding multiple TO Email Id  
+                    }
+
+                    if (!string.IsNullOrEmpty(ccList))
+                    {
+                        string[] CCId = ccList.Split(',');
+
+                        foreach (string CCEmail in CCId)
+                        {
+                            mail.CC.Add(new MailAddress(CCEmail)); //Adding Multiple CC email Id  
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(bccList))
+                    {
+                        string[] bccid = bccList.Split(',');
+
+                        foreach (string bccEmailId in bccid)
+                        {
+                            mail.Bcc.Add(new MailAddress(bccEmailId)); //Adding Multiple BCC email Id  
+                        }
+                    }
+
                     SmtpClient SmtpServer = new SmtpClient(HostAdd);
                     System.Net.Mail.Attachment attachment = new System.Net.Mail.Attachment(fileAttachment);
                     mail.Attachments.Add(attachment);
@@ -138,12 +122,12 @@ namespace CronService_Processor
                 }
                 else
                 {
-                    //DisplayMsg("Mail Content Not Found");
+                    EventLog.WriteEntry("Cron Email Service", $"Report File Path not found", EventLogEntryType.Error);
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.ToString());
+                EventLog.WriteEntry("Cron Email Service", $"Exception occurred - {ex.Message} - {ex.StackTrace}", EventLogEntryType.Error);
             }
         }
 
@@ -228,7 +212,7 @@ namespace CronService_Processor
             }
             catch (Exception ex)
             {
-                //MessageBox.Show("Error: " + ex.ToString());
+                EventLog.WriteEntry("Cron Email Service", $"Exception occurred - {ex.Message} - {ex.StackTrace}", EventLogEntryType.Error);
             }
             return filename;
         }
