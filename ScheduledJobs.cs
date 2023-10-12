@@ -46,6 +46,13 @@ namespace CronService_Processor
                         DataTable dt = access.GetTable(cmd);
                         if (dt.Rows.Count > 0 && !string.IsNullOrEmpty(reportName))
                         {
+                            string filepath = System.IO.Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory + "/Reports/" + reportName + "/" + string.Format("{0}.xlsx", reportName));
+                            if (File.Exists(filepath))
+                            {
+                                GC.Collect();
+                                GC.WaitForPendingFinalizers();
+                                File.Delete(filepath);
+                            }
                             EventLog.WriteEntry("Cron Email Service", $"Exporting {reportName} to Excel", EventLogEntryType.Information);
                             string filename = ExportToExcel(dt, reportName);
                             EventLog.WriteEntry("Cron Email Service", $"Sending Email for {reportName}", EventLogEntryType.Information);
@@ -133,7 +140,7 @@ namespace CronService_Processor
 
         private string ExportToExcel(System.Data.DataTable dt, string label)
         {
-            Microsoft.Office.Interop.Excel.Application excel = null;
+            Microsoft.Office.Interop.Excel._Application excel = new Microsoft.Office.Interop.Excel.Application();
             Microsoft.Office.Interop.Excel.Workbook wb = null;
 
             object misValue = System.Reflection.Missing.Value;
@@ -145,11 +152,9 @@ namespace CronService_Processor
             try
             {
                 filename = System.IO.Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory + "/Reports/" + label + "/" + string.Format("{0}.xlsx", label));
-                excel = new Microsoft.Office.Interop.Excel.Application();
-                wb = excel.Workbooks.Open(filename, 0, false, 5, "", "",
-                            false, XlPlatform.xlWindows, "", true, false,
-                            0, true, false, false);
-                ws = (Microsoft.Office.Interop.Excel.Worksheet)wb.ActiveSheet;
+
+                wb = excel.Workbooks.Add(misValue);
+                ws = (Excel.Worksheet)wb.Worksheets.get_Item(1);
 
                 for (int Idx = 0; Idx < dt.Columns.Count; Idx++)
                 {
@@ -206,16 +211,18 @@ namespace CronService_Processor
                 ws.Columns.AutoFit();
                 wb.RefreshAll();
                 excel.Calculate();
-                wb.Save();
-                wb.Close(0);
-                System.Runtime.InteropServices.Marshal.ReleaseComObject(ws);
-                System.Runtime.InteropServices.Marshal.ReleaseComObject(wb);
+                wb.SaveCopyAs(filename);
+                wb.Close(true, misValue, misValue);
                 excel.Quit();
-                System.Runtime.InteropServices.Marshal.ReleaseComObject(excel);
+                excel = null;
+
+                // Collect the unreferenced objects         
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
             }
             catch (Exception ex)
             {
-                EventLog.WriteEntry("Cron Email Service", $"Exception occurred - {ex.Message} - {ex.StackTrace}", EventLogEntryType.Error);
+                EventLog.WriteEntry("Cron Email Service", $"Exception occurred - {ex.Message} - {ex.StackTrace} - {ex.InnerException}", EventLogEntryType.Error);
             }
             return filename;
         }
