@@ -24,6 +24,9 @@ namespace CronService_Processor
     public class ScheduledJobs : IJob
     {
         EventLog EventLog = new EventLog();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
         public void Execute(IJobExecutionContext context)
         {
             try
@@ -212,19 +215,40 @@ namespace CronService_Processor
                 wb.RefreshAll();
                 excel.Calculate();
                 wb.SaveCopyAs(filename);
-                wb.Close(true, misValue, misValue);
-                excel.Quit();
-                excel = null;
-
-                // Collect the unreferenced objects         
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
+                wb.Close(true, misValue, misValue);
+                excel.Quit();
+
+                uint pid;
+                HandleRef hwnd = new HandleRef(excel, (IntPtr)excel.Hwnd);
+                GetWindowThreadProcessId((IntPtr)excel.Hwnd, out pid);
+                KillProcess(pid, "EXCEL");
+
+                Marshal.FinalReleaseComObject(wb);
+                Marshal.FinalReleaseComObject(excel);
+                excel = null;
+
             }
             catch (Exception ex)
             {
                 EventLog.WriteEntry("Cron Email Service", $"Exception occurred - {ex.Message} - {ex.StackTrace} - {ex.InnerException}", EventLogEntryType.Error);
             }
             return filename;
+        }
+        
+        private void KillProcess(uint pid, string processName)
+        {
+            // to kill current process of excel
+            System.Diagnostics.Process[] AllProcesses = System.Diagnostics.Process.GetProcessesByName(processName);
+            foreach (System.Diagnostics.Process process in AllProcesses)
+            {
+                if (process.Id == pid)
+                {
+                    process.Kill();
+                }
+            }
+            AllProcesses = null;
         }
     }
 }
